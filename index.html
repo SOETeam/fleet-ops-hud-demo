@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Ops HUD Demo · SOETech Agent Fleet</title>
+<meta name="description" content="Public demo of a multi-agent fleet operations HUD: six synthetic agents with cycling status pills, a rolling task feed, a 24h uptime strip, and a throughput sparkline — one static file, zero backend, zero network calls. Built by the SOETech agent fleet.">
+<link rel="canonical" href="https://soeteam.github.io/fleet-ops-hud-demo/">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#05070d">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Fleet Ops HUD Demo — multi-agent orchestration">
+<meta property="og:description" content="Six synthetic agents, live status pills, task feed, uptime strip, and throughput sparkline in a single static file.">
+<meta property="og:url" content="https://soeteam.github.io/fleet-ops-hud-demo/">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --cyan: #00e5ff;
+    --magenta: #ff2ec4;
+    --yellow: #f8e71c;
+    --bg: #05070d;
+    --panel: rgba(0, 229, 255, 0.045);
+    --line: rgba(0, 229, 255, 0.30);
+    --line-soft: rgba(0, 229, 255, 0.14);
+    --dim: rgba(190, 215, 230, 0.55);
+    --text: #cfeef7;
+    --mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  html { color-scheme: dark; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(ellipse 90% 60% at 50% -10%, rgba(0, 229, 255, 0.08), transparent),
+      linear-gradient(rgba(0, 229, 255, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 229, 255, 0.025) 1px, transparent 1px);
+    background-size: auto, 44px 44px, 44px 44px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+  /* ---------- header ---------- */
+  header.top {
+    padding: 28px 0 18px;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  h1 {
+    font-size: clamp(20px, 3.4vw, 30px);
+    letter-spacing: 0.14em;
+    color: var(--cyan);
+    text-shadow: 0 0 18px rgba(0, 229, 255, 0.35);
+  }
+  h1 .tick { color: var(--magenta); }
+  .sub { color: var(--dim); font-size: 12px; letter-spacing: 0.08em; }
+  .top-meta { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 11px; color: var(--dim); letter-spacing: 0.08em; }
+  .live { display: inline-flex; align-items: center; gap: 7px; color: var(--yellow); letter-spacing: 0.12em; }
+  .live-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 8px var(--cyan);
+    animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.72); } }
+
+  /* ---------- panels + corner brackets ---------- */
+  main { display: grid; grid-template-columns: 1.55fr 1fr; gap: 18px; padding: 22px 0; }
+  .panel { position: relative; border: 1px solid var(--line-soft); background: var(--panel); padding: 16px 16px 18px; }
+  .panel::before, .panel::after { content: ""; position: absolute; width: 14px; height: 14px; pointer-events: none; }
+  .panel::before { top: -1px; left: -1px; border-top: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+  .panel::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+  .panel-title {
+    font-size: 11px; letter-spacing: 0.22em; color: var(--dim);
+    margin-bottom: 12px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  }
+  .panel-title b { color: var(--cyan); font-weight: 600; }
+
+  /* ---------- filters ---------- */
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .chip {
+    font: inherit; font-size: 10px; letter-spacing: 0.14em; color: var(--dim);
+    background: transparent; border: 1px solid var(--line-soft); padding: 5px 10px; cursor: pointer;
+  }
+  .chip:hover { color: var(--cyan); border-color: var(--line); }
+  .chip[aria-pressed="true"] { color: var(--bg); background: var(--cyan); border-color: var(--cyan); }
+
+  /* ---------- agent grid ---------- */
+  .grid-agents { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .agent {
+    border: 1px solid var(--line-soft); padding: 12px 12px 10px;
+    cursor: pointer; background: rgba(5, 7, 13, 0.55);
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .agent:hover, .agent:focus-visible { border-color: var(--line); transform: translateY(-2px); outline: none; }
+  .agent.hidden { display: none; }
+  .agent-top { display: flex; align-items: center; gap: 8px; }
+  .agent-top h3 { font-size: 13px; letter-spacing: 0.12em; color: var(--text); flex: 1; font-weight: 600; }
+  .agent .live-dot { width: 6px; height: 6px; }
+  .pill { font-size: 9px; letter-spacing: 0.14em; padding: 3px 8px; border: 1px solid; white-space: nowrap; }
+  .st-active { color: var(--cyan); border-color: var(--cyan); background: rgba(0, 229, 255, 0.08); }
+  .st-busy   { color: var(--yellow); border-color: var(--yellow); background: rgba(248, 231, 28, 0.08); }
+  .st-idle   { color: var(--magenta); border-color: var(--magenta); background: rgba(255, 46, 196, 0.08); }
+  .role { color: var(--dim); font-size: 10px; letter-spacing: 0.08em; margin: 8px 0 10px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .stats div { border-top: 1px solid var(--line-soft); padding-top: 6px; }
+  .stats dt { font-size: 8px; color: var(--dim); letter-spacing: 0.12em; }
+  .stats dd { font-size: 12px; color: var(--text); margin-top: 3px; }
+
+  /* ---------- task feed ---------- */
+  .feed { list-style: none; display: flex; flex-direction: column; gap: 8px; max-height: 430px; overflow: hidden; }
+  .feed li {
+    display: flex; align-items: baseline; gap: 6px;
+    border-left: 2px solid var(--line); padding: 6px 10px;
+    background: rgba(0, 229, 255, 0.03); font-size: 11px; line-height: 1.5;
+    animation: slidein 0.35s ease;
+  }
+  .feed li .a { color: var(--cyan); }
+  .feed li .o { color: var(--dim); }
+  .feed li .t { margin-left: auto; color: var(--dim); font-size: 9px; white-space: nowrap; }
+  @keyframes slidein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+  /* ---------- uptime strip ---------- */
+  .strip { display: flex; gap: 3px; align-items: flex-end; height: 64px; }
+  .strip .bar { flex: 1; min-height: 3px; background: var(--cyan); box-shadow: 0 0 6px rgba(0, 229, 255, 0.4); }
+  .strip .bar.warn { background: var(--yellow); box-shadow: 0 0 6px rgba(248, 231, 28, 0.35); }
+  .strip .bar.bad { background: var(--magenta); box-shadow: 0 0 6px rgba(255, 46, 196, 0.35); }
+  .strip-meta { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); margin-top: 8px; letter-spacing: 0.08em; }
+  .lg { display: inline-block; width: 8px; height: 8px; margin: 0 4px 0 10px; vertical-align: middle; }
+  .lg-ok { background: var(--cyan); }
+  .lg-warn { background: var(--yellow); }
+  .lg-bad { background: var(--magenta); }
+  .strip-meta .lg:first-child { margin-left: 0; }
+
+  /* ---------- sparkline ---------- */
+  canvas#spark { width: 100%; height: 120px; display: block; }
+
+  /* ---------- detail drawer ---------- */
+  .drawer {
+    position: fixed; top: 0; right: 0; height: 100%; width: min(360px, 92vw);
+    background: rgba(5, 8, 14, 0.97); border-left: 1px solid var(--line);
+    transform: translateX(102%); transition: transform 0.25s ease;
+    padding: 22px; z-index: 50; overflow-y: auto;
+  }
+  .drawer.open { transform: none; }
+  .drawer h2 { color: var(--cyan); letter-spacing: 0.16em; font-size: 16px; margin-bottom: 4px; }
+  .drawer .sub { display: block; margin-bottom: 14px; }
+  .kv {
+    display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center;
+    font-size: 11px; border-top: 1px solid var(--line-soft); padding: 9px 0;
+  }
+  .kv span.k { color: var(--dim); letter-spacing: 0.1em; }
+  .drawer-note { font-size: 10px; color: var(--dim); margin-top: 14px; line-height: 1.6; }
+  .close-btn {
+    position: absolute; top: 12px; right: 12px;
+    font: inherit; font-size: 12px; color: var(--magenta);
+    background: transparent; border: 1px solid var(--magenta); cursor: pointer; padding: 4px 9px;
+  }
+  .close-btn:hover { background: rgba(255, 46, 196, 0.12); }
+
+  /* ---------- footer ---------- */
+  footer { border-top: 1px solid var(--line-soft); margin-top: 10px; padding: 18px 0 26px; display: grid; gap: 6px; }
+  footer p { font-size: 11px; color: var(--dim); letter-spacing: 0.06em; line-height: 1.6; }
+  footer .foot-proof { color: var(--text); }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 940px) {
+    main { grid-template-columns: 1fr; }
+    .grid-agents { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .grid-agents { grid-template-columns: 1fr; }
+    .top-meta { margin-left: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot { animation: none; }
+    .feed li { animation: none; }
+    .agent, .drawer { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top wrap">
+  <h1>FLEET OPS <span class="tick">HUD</span></h1>
+  <p class="sub">multi-agent orchestration mock · sanitized build · synthetic demo, no live systems</p>
+  <div class="top-meta">
+    <span class="live"><span class="live-dot" aria-hidden="true"></span>SYNTHETIC LIVE</span>
+    <span id="clock">--:--:--</span>
+    <span id="ticker">T+0s · auto-refresh simulated</span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="panel" id="agents-panel" aria-labelledby="agents-h">
+    <h2 class="panel-title" id="agents-h"><span><b>AGENT GRID</b> · 6 UNITS</span><span>CLICK CARD FOR DETAIL</span></h2>
+    <div class="filters" role="group" aria-label="status filter">
+      <button class="chip" data-kind="status" data-filter="ALL" aria-pressed="true">ALL</button>
+      <button class="chip" data-kind="status" data-filter="ACTIVE" aria-pressed="false">ACTIVE</button>
+      <button class="chip" data-kind="status" data-filter="BUSY" aria-pressed="false">BUSY</button>
+      <button class="chip" data-kind="status" data-filter="IDLE" aria-pressed="false">IDLE</button>
+    </div>
+    <div class="filters" role="group" aria-label="domain filter">
+      <button class="chip" data-kind="domain" data-filter="ALL" aria-pressed="true">ALL</button>
+      <button class="chip" data-kind="domain" data-filter="ORCHESTRATION" aria-pressed="false" title="orchestration">ORCH</button>
+      <button class="chip" data-kind="domain" data-filter="FINANCE" aria-pressed="false" title="finance">FIN</button>
+      <button class="chip" data-kind="domain" data-filter="COMMS" aria-pressed="false" title="comms">COMM</button>
+      <button class="chip" data-kind="domain" data-filter="ARCHIVE" aria-pressed="false" title="archive">ARCH</button>
+      <button class="chip" data-kind="domain" data-filter="INFRA" aria-pressed="false" title="infra">INFRA</button>
+      <button class="chip" data-kind="domain" data-filter="RESEARCH" aria-pressed="false" title="research">RES</button>
+    </div>
+    <div class="grid-agents" id="agentGrid"></div>
+  </section>
+
+  <section class="panel" id="feed-panel" aria-labelledby="feed-h">
+    <h2 class="panel-title" id="feed-h"><span><b>TASK FEED</b> · SIMULATED AUTO-REFRESH</span><span id="feed-count"></span></h2>
+    <ul class="feed" id="feed" role="log" aria-label="synthetic task events"></ul>
+  </section>
+
+  <section class="panel" aria-labelledby="uptime-h">
+    <h2 class="panel-title" id="uptime-h"><span><b>UPTIME STRIP</b> · 24H</span><span id="uptime-summary"></span></h2>
+    <div class="strip" id="strip"></div>
+    <div class="strip-meta">
+      <span>−24h</span>
+      <span><i class="lg lg-ok"></i>NOMINAL <i class="lg lg-warn"></i>DEGRADED <i class="lg lg-bad"></i>INCIDENT</span>
+      <span>now</span>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="spark-h">
+    <h2 class="panel-title" id="spark-h"><span><b>THROUGHPUT SPARKLINE</b> · TASKS/MIN</span><span id="spark-now"></span></h2>
+    <canvas id="spark" width="600" height="120" role="img" aria-label="synthetic throughput sparkline"></canvas>
+  </section>
+</main>
+
+<aside class="drawer" id="drawer" aria-hidden="true" aria-labelledby="drawer-title">
+  <button class="close-btn" id="drawerClose" aria-label="close detail">✕ ESC</button>
+  <h2 id="drawer-title"></h2>
+  <span class="sub" id="drawer-role"></span>
+  <div id="drawer-body"></div>
+</aside>
+
+<footer class="wrap">
+  <p class="foot-proof">This demo shows multi-agent orchestration built by the SOETech agent fleet.</p>
+  <p>Built by the SOETech agent fleet · synthetic demo data · 2026-09-30</p>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- seeded RNG: reproducible synthetic data, zero network calls ---------- */
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  var rng = mulberry32(0x50f1e7);
+
+  /* ---------- inline synthetic constants ---------- */
+  var STATUSES = ["ACTIVE", "BUSY", "IDLE"];
+  var STATUS_CLASS = { ACTIVE: "st-active", BUSY: "st-busy", IDLE: "st-idle" };
+
+  var AGENTS = [
+    { id: "OPSEON",      role: "Fleet Coordinator",  domain: "ORCHESTRATION", status: "ACTIVE", tasks: 12, uptime: 99.4, latency: 118 },
+    { id: "LEDGERWOLF",  role: "Finance & Ledger",   domain: "FINANCE",       status: "BUSY",   tasks: 9,  uptime: 99.1, latency: 143 },
+    { id: "SIGNALHOUND", role: "Comms & Alerts",     domain: "COMMS",         status: "IDLE",   tasks: 4,  uptime: 98.7, latency: 97  },
+    { id: "ARCHIVIST",   role: "Records & Index",    domain: "ARCHIVE",       status: "ACTIVE", tasks: 15, uptime: 99.9, latency: 66  },
+    { id: "BRICKMASON",  role: "Infra & Builds",     domain: "INFRA",         status: "BUSY",   tasks: 7,  uptime: 99.6, latency: 205 },
+    { id: "MERIDIAN",    role: "Research & Routing", domain: "RESEARCH",      status: "IDLE",   tasks: 6,  uptime: 98.2, latency: 132 }
+  ];
+
+  var FEED_ACTIONS = [
+    ["dispatched sweep job", "quota digest #4821"],
+    ["merged ledger batch", "7 reconciled entries"],
+    ["routed alert bundle", "3 channels notified"],
+    ["indexed archive shard", "5,120 documents"],
+    ["staged infra build", "artifact hud-0402"],
+    ["compiled research brief", "6 sources cited"],
+    ["rotated task queue", "12 jobs rebalanced"],
+    ["sealed daily rollup", "1 digest published"]
+  ];
+
+  /* ---------- helpers ---------- */
+  function $(id) { return document.getElementById(id); }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function pad2(n) { return String(n).padStart(2, "0"); }
+  function fmtClock(d) { return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()); }
+  function ago(ts) {
+    var s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+    if (s < 90) return s + "s ago";
+    var m = Math.floor(s / 60);
+    if (m < 90) return m + "m ago";
+    var h = Math.floor(m / 60);
+    if (h < 48) return h + "h ago";
+    return Math.floor(h / 24) + "d ago";
+  }
+
+  /* ---------- synthetic task feed (seeded, timestamps ≤7d old) ---------- */
+  var FEED = [];
+  var FEED_MAX = 9;
+  function makeItem(ts) {
+    var ai = Math.floor(rng() * AGENTS.length);
+    var act = FEED_ACTIONS[Math.floor(rng() * FEED_ACTIONS.length)];
+    return { agent: AGENTS[ai].id, action: act[0], object: act[1], ts: ts };
+  }
+  (function seedFeed() {
+    var now = Date.now();
+    for (var i = 0; i < 8; i++) FEED.push(makeItem(now - Math.floor(rng() * 7 * 24 * 3600 * 1000)));
+    FEED.sort(function (a, b) { return b.ts - a.ts; });
+  })();
+
+  /* ---------- agent grid ---------- */
+  var grid = $("agentGrid");
+  var statusFilter = "ALL";
+  var domainFilter = "ALL";
+
+  function applyStatus(a, card) {
+    card.dataset.status = a.status;
+    var pill = card.querySelector(".pill");
+    pill.textContent = a.status;
+    pill.className = "pill " + STATUS_CLASS[a.status];
+  }
+
+  function buildAgents() {
+    AGENTS.forEach(function (a, i) {
+      var card = document.createElement("article");
+      card.className = "agent";
+      card.dataset.idx = String(i);
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-label", a.id + " detail drawer");
+      card.innerHTML =
+        '<div class="agent-top"><span class="live-dot" aria-hidden="true"></span>' +
+        "<h3>" + a.id + "</h3>" +
+        '<span class="pill"></span></div>' +
+        '<p class="role">' + a.role + " · " + a.domain + "</p>" +
+        '<dl class="stats">' +
+        "<div><dt>TASKS 24H</dt><dd>" + a.tasks + "</dd></div>" +
+        "<div><dt>UPTIME</dt><dd>" + a.uptime.toFixed(1) + "%</dd></div>" +
+        "<div><dt>AVG LAT</dt><dd>" + a.latency + "ms</dd></div>" +
+        "</dl>";
+      card.addEventListener("click", function () { openDrawer(i); });
+      card.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDrawer(i); }
+      });
+      grid.appendChild(card);
+      applyStatus(a, card);
+    });
+  }
+
+  function applyFilters() {
+    var cards = grid.querySelectorAll(".agent");
+    AGENTS.forEach(function (a, i) {
+      var card = cards[i];
+      if (!card) return;
+      var ok = (statusFilter === "ALL" || statusFilter === a.status) &&
+               (domainFilter === "ALL" || domainFilter === a.domain);
+      card.classList.toggle("hidden", !ok);
+    });
+  }
+
+  Array.prototype.slice.call(document.querySelectorAll(".chip")).forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      var kind = chip.dataset.kind;
+      if (kind === "status") statusFilter = chip.dataset.filter; else domainFilter = chip.dataset.filter;
+      Array.prototype.slice.call(document.querySelectorAll('.chip[data-kind="' + kind + '"]'))
+        .forEach(function (c) { c.setAttribute("aria-pressed", String(c === chip)); });
+      applyFilters();
+    });
+  });
+
+  /* status pill cycling — simulated heartbeat */
+  function cycleStatuses() {
+    var i = Math.floor(Math.random() * AGENTS.length);
+    var a = AGENTS[i];
+    var next = STATUSES[(STATUSES.indexOf(a.status) + 1 + Math.floor(Math.random() * (STATUSES.length - 1))) % STATUSES.length];
+    a.status = next;
+    var card = grid.querySelector('[data-idx="' + i + '"]');
+    if (card) applyStatus(a, card);
+    if (drawerIdx === i) fillDrawer(i);
+    applyFilters();
+  }
+
+  /* ---------- feed rendering ---------- */
+  var feed = $("feed");
+  var feedCount = 0;
+
+  function feedNode(item) {
+    var li = document.createElement("li");
+    li.innerHTML =
+      '<span class="a">' + item.agent + "</span> " + item.action +
+      ' — <span class="o">' + item.object + "</span>" +
+      '<span class="t">' + ago(item.ts) + "</span>";
+    return li;
+  }
+
+  function renderFeed() {
+    feed.innerHTML = "";
+    FEED.forEach(function (item) { feed.appendChild(feedNode(item)); });
+    $("feed-count").textContent = feedCount + " EVENTS";
+  }
+
+  setInterval(function () {
+    var item = makeItem(Date.now());
+    FEED.unshift(item);
+    if (FEED.length > FEED_MAX) FEED.pop();
+    feed.insertBefore(feedNode(item), feed.firstChild);
+    feedCount += 1;
+    $("feed-count").textContent = feedCount + " EVENTS";
+  }, 4000);
+
+  /* refresh relative timestamps */
+  setInterval(renderFeed, 60000);
+
+  /* ---------- uptime strip ---------- */
+  var strip = $("strip");
+  var BARS = 24;
+  (function buildStrip() {
+    var vals = [];
+    for (var i = 0; i < BARS; i++) {
+      var v = rng() > 0.92 ? Math.floor(rng() * 4) + 94 : 100;
+      vals.push(v);
+    }
+    var sum = vals.reduce(function (acc, b) { return acc + b; }, 0) / vals.length;
+    var degraded = vals.filter(function (v) { return v < 100; }).length;
+    $("uptime-summary").textContent = "MEAN " + (sum).toFixed(1) + "% · " + degraded + " DEGRADED HRS";
+    vals.forEach(function (v, i) {
+      var bar = document.createElement("div");
+      bar.className = "bar" + (v < 97 ? " bad" : v < 100 ? " warn" : "");
+      bar.style.height = Math.round(((v - 90) / 10) * 100) + "%";
+      bar.title = "hour −" + (BARS - i) + " · " + v.toFixed(1) + "%";
+      strip.appendChild(bar);
+    });
+  })();
+
+  /* ---------- throughput sparkline ---------- */
+  var canvas = $("spark");
+  var ctx = canvas.getContext("2d");
+  var series = [];
+  (function seedSeries() {
+    var v = 52;
+    for (var i = 0; i < 64; i++) { v = clamp(v + (rng() * 16 - 8), 18, 88); series.push(v); }
+  })();
+
+  function sizeCanvas() {
+    var dpr = window.devicePixelRatio || 1;
+    var w = canvas.clientWidth || 600;
+    canvas.width = Math.max(300, Math.floor(w * dpr));
+    canvas.height = 120 * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function drawSpark() {
+    var w = canvas.clientWidth || 600;
+    var h = 120;
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = "rgba(0,229,255,0.10)";
+    ctx.lineWidth = 1;
+    for (var gy = 30; gy < h; gy += 30) {
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
+    }
+    var n = series.length;
+    var step = w / (n - 1);
+    function pt(i) { return [i * step, h - 8 - (series[i] / 100) * (h - 20)]; }
+    var grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, "rgba(255,46,196,0.35)");
+    grad.addColorStop(1, "rgba(255,46,196,0)");
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (var i = 0; i < n; i++) { var p = pt(i); ctx.lineTo(p[0], p[1]); }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.beginPath();
+    for (var j = 0; j < n; j++) {
+      var q = pt(j);
+      if (j === 0) ctx.moveTo(q[0], q[1]); else ctx.lineTo(q[0], q[1]);
+    }
+    ctx.strokeStyle = "#00e5ff";
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "rgba(0,229,255,0.6)";
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    var last = pt(n - 1);
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = "#f8e71c";
+    ctx.fill();
+    $("spark-now").textContent = Math.round(series[n - 1]) + " / MIN";
+  }
+
+  window.addEventListener("resize", function () { sizeCanvas(); drawSpark(); });
+  setInterval(function () {
+    var v = clamp(series[series.length - 1] + (Math.random() * 18 - 9), 18, 88);
+    series.push(v); series.shift();
+    drawSpark();
+  }, 2000);
+
+  /* ---------- detail drawer ---------- */
+  var drawer = $("drawer");
+  var drawerIdx = -1;
+
+  function fillDrawer(i) {
+    var a = AGENTS[i];
+    $("drawer-title").textContent = a.id;
+    $("drawer-role").textContent = a.role + " · " + a.domain + " (synthetic unit)";
+    var last = null;
+    for (var k = 0; k < FEED.length; k++) { if (FEED[k].agent === a.id) { last = FEED[k]; break; } }
+    $("drawer-body").innerHTML =
+      '<div class="kv"><span class="k">STATUS</span><span class="pill ' + STATUS_CLASS[a.status] + '">' + a.status + "</span></div>" +
+      '<div class="kv"><span class="k">TASKS 24H</span><span>' + a.tasks + "</span></div>" +
+      '<div class="kv"><span class="k">UPTIME</span><span>' + a.uptime.toFixed(1) + "%</span></div>" +
+      '<div class="kv"><span class="k">AVG LATENCY</span><span>' + a.latency + "ms</span></div>" +
+      '<div class="kv"><span class="k">LAST ACTION</span><span>' + (last ? last.action + " · " + last.object : "queued") + "</span></div>" +
+      '<p class="drawer-note">All metrics on this card are fabricated for demonstration purposes only.</p>';
+  }
+
+  function openDrawer(i) {
+    drawerIdx = i;
+    fillDrawer(i);
+    drawer.classList.add("open");
+    drawer.setAttribute("aria-hidden", "false");
+    $("drawerClose").focus();
+  }
+
+  function closeDrawer() {
+    drawerIdx = -1;
+    drawer.classList.remove("open");
+    drawer.setAttribute("aria-hidden", "true");
+  }
+
+  $("drawerClose").addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeDrawer(); });
+
+  /* ---------- clock + session ticker ---------- */
+  var t0 = Date.now();
+  function tick() {
+    $("clock").textContent = fmtClock(new Date());
+    $("ticker").textContent = "T+" + Math.floor((Date.now() - t0) / 1000) + "s · auto-refresh simulated";
+  }
+  setInterval(tick, 1000);
+
+  /* ---------- heartbeat timers ---------- */
+  setInterval(cycleStatuses, 5000);
+
+  /* ---------- init ---------- */
+  buildAgents();
+  renderFeed();
+  feedCount = FEED.length;
+  $("feed-count").textContent = feedCount + " EVENTS";
+  sizeCanvas();
+  drawSpark();
+  tick();
+})();
+</script>
+</body>
+</html>
